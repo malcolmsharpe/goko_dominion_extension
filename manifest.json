@@ -1,0 +1,19 @@
+{
+  "name": "Goko Dominion Point Counter",
+  "version": "0.1",
+  "description": "A point counter for Goko Dominion.",
+  "permissions": [
+    "webRequest",
+    "webRequestBlocking",
+    "http://dominion.goko.com/"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["http://dominion.goko.com/Dominion/v*/gameClient.html"],
+      "js": ["jquery-1.7.1.js",
+             "jquery.ba-dotimeout.js",
+             "pce.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
