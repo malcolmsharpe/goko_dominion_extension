@@ -12,14 +12,14 @@ $(document).ready(function() {var main = function() {
         var wrapper = this;
         this.onmessage = function(message) {
           var data = message.data;
-          onReceiveData(data);
+          onReceiveData(wrapper, data);
           wrapper.trueonmessage({data: data});
         };
         this.__defineSetter__('onmessage', function(val) {
           wrapper.trueonmessage = val;
         });
         this.send = function(data) {
-          onSendData(data);
+          onSendData(wrapper, data);
           this.prototype.send(data);
         };
       };
@@ -33,17 +33,22 @@ $(document).ready(function() {var main = function() {
     return JSON.stringify(msg, null, 4);
   }
 
-  function onSendData(raw_data) {
-    processRawData(raw_data);
+  function onSendData(wrapper, raw_data) {
+    processRawData(wrapper, raw_data);
   }
 
-  function onReceiveData(raw_data) {
-    processRawData(raw_data);
+  function onReceiveData(wrapper, raw_data) {
+    processRawData(wrapper, raw_data);
   }
 
-  var playerNames = undefined;
+  var websocket_wrapper;
+  var userID;
+  var gameID;
 
-  function processRawData(raw_data) {
+  var playerNames;
+  var playerIndex;
+
+  function processRawData(wrapper, raw_data) {
     var msg = $.parseJSON(raw_data);
     if (msg.message == 'GameMessage') {
       var outerdata = msg.data;
@@ -51,6 +56,13 @@ $(document).ready(function() {var main = function() {
       var gmdata = outerdata.data;
 
       if (msgname == 'gameSetup') {
+        // This is a reasonable time to save information that's constant
+        // throughout a single game.
+        websocket_wrapper = wrapper;
+        userID = msg.destination;
+        gameID = msg.source;
+        playerIndex = gmdata.playerIndex;
+
         // Get correspondence between player names and player indices.
         playerNames = [];
         $.each(gmdata.playerInfos, function(i, playerInfo) {
@@ -75,6 +87,10 @@ $(document).ready(function() {var main = function() {
             console.log('  ' + qualifiedCard);
           });
         });
+
+        // Send a greeting.
+        var wait_time = 4000;
+        setTimeout(introducePlugin, wait_time);
       } else if (msgname == 'moveCards') {
         // Process a card move that is NOT triggered by this player's input.
         $.each(gmdata, function(i, moveData) {
@@ -161,6 +177,48 @@ $(document).ready(function() {var main = function() {
   function setVPTokens(playerIndex, numVPTokens) {
     var player = playerNames[playerIndex];
     console.log('Player ' + player + ' has ' + numVPTokens + ' VP tokens');
+  }
+
+  function introducePlugin() {
+    sendChat("* Cards tracked by Goko Dominion Extension *");
+  }
+
+  function sendChat(text) {
+    // Send to others.
+    var msg = {
+      'message': 'GameMessage',
+      'version': 1,
+      'tag': '',
+      'source': userID,
+      'destination': gameID,
+      'data': {
+        'messageName': 'sendChat',
+        'data': {
+          'text': text
+        }
+      }
+    };
+    var data = JSON.stringify(msg);
+    websocket_wrapper.send(data);
+
+    // Send to me.
+    var myName = playerNames[playerIndex];
+    var msg = {
+      'message': 'GameMessage',
+      'version': 1,
+      'tag': '',
+      'source': gameID,
+      'destination': userID,
+      'data': {
+        'messageName': 'addChat',
+        'data': {
+          'playerName': myName,
+          'text': text
+        }
+      }
+    };
+    var data = JSON.stringify(msg);
+    websocket_wrapper.prototype.onmessage({data: data});
   }
 }
 
