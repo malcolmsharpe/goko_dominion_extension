@@ -16,12 +16,3 @@ Goko Dominion client and the server. It does NOT look at the log, but instead at
 the movement of cards between different areas of the client (supply, deck,
 discard, etc.). This way, all necessary information is available without
 parsing.
-
-# Known issues
-
-- Nothing is actually tracked yet.
-- Some information is observable that shouldn't be:
-  * The exact cards any player draws.
-  * The cards passed to Masquerade, even before every player has selected a
-    card.
-  * Unconfirmed: the card drawn onto the Native Village mat.
