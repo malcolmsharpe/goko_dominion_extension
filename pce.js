@@ -12,7 +12,13 @@ $(document).ready(function() {var main = function() {
         var wrapper = this;
         this.onmessage = function(message) {
           var data = message.data;
-          onReceiveData(wrapper, data);
+          var ret = onReceiveData(wrapper, data);
+          if (ret != undefined) {
+            console.log('Modified received data.');
+            console.log('Original: ' + data);
+            data = ret;
+            console.log('Modified: ' + data);
+          }
           wrapper.trueonmessage({data: data});
         };
         this.__defineSetter__('onmessage', function(val) {
@@ -34,11 +40,11 @@ $(document).ready(function() {var main = function() {
   }
 
   function onSendData(wrapper, raw_data) {
-    processRawData(wrapper, raw_data);
+    return processRawData(wrapper, raw_data);
   }
 
   function onReceiveData(wrapper, raw_data) {
-    processRawData(wrapper, raw_data);
+    return processRawData(wrapper, raw_data);
   }
 
   var websocket_wrapper;
@@ -48,12 +54,41 @@ $(document).ready(function() {var main = function() {
   var playerNames;
   var playerIndex;
 
+  var PRINT_MESSAGE_TYPES = true;
+  var DUMP_MESSAGES = {'Ping': true, 'Status': true};
+  var PRINT_GM_TYPES = true;
+  var DUMP_ALL_GM = true;
+  var DUMP_GM = {'uiMultiSelectResponse': true, 'addChat': true};
+
+  var CHEAT_BUYABLE = false;
+  var CHEAT_SUPPLY_PLAYABLE = false;
+
   function processRawData(wrapper, raw_data) {
     var msg = $.parseJSON(raw_data);
+    if (PRINT_MESSAGE_TYPES) {
+      console.log('Message type: ' + msg.message);
+    }
+
+    if (DUMP_MESSAGES[msg.message]) {
+      console.log(msg.message + ': ' + prettyJSON(msg));
+    }
+
+    var changed = false;
+
     if (msg.message == 'GameMessage') {
       var outerdata = msg.data;
       var msgname = outerdata.messageName;
       var gmdata = outerdata.data;
+
+      if (PRINT_GM_TYPES) {
+        console.log('    GameMessage type: ' + msgname);
+      }
+      if (DUMP_ALL_GM) {
+        console.log('    GameMessage contents: ' + prettyJSON(msg));
+      }
+      if (DUMP_GM[msgname]) {
+        console.log(msgname + ': ' + prettyJSON(msg));
+      }
 
       if (msgname == 'gameSetup') {
         // This is a reasonable time to save information that's constant
@@ -142,7 +177,74 @@ $(document).ready(function() {var main = function() {
         if (vptokens != undefined) {
           setVPTokens(vptokens.playerIndex, vptokens.numVictoryPointTokens);
         }
+      } else if (msgname == 'uiMultiSelect') {
+        if (CHEAT_BUYABLE) {
+          var what = prompt('Make buyable:');
+          if (what) {
+            addToBuyable(gmdata, what);
+            changed = true;
+          }
+        }
+
+        if (CHEAT_SUPPLY_PLAYABLE) {
+          var what = prompt('Make playable from supply:');
+          if (what) {
+            addToSupplyPlayable(gmdata, what);
+            changed = true;
+          }
+        }
       }
+    }
+
+    if (changed) return JSON.stringify(msg);
+  }
+
+  function addToSupplyPlayable(gmdata, card_id) {
+    var arr = /([^.]*)\.([0-9]*)/.exec(card_id);
+    if (arr) {
+      gmdata.draggables.push({
+        "id": "play:" + card_id,
+        "destinations": [
+          {
+            "area": {
+              "name": "play"
+            }
+          }
+        ],
+        "source": {
+          "area": {
+            "name": "supply",
+            "supplyDeck": arr[1],
+          }
+        },
+        "card": card_id,
+        "moveToDestination": true
+      });
+    }
+  }
+
+  function addToBuyable(gmdata, card_id) {
+    var arr = /([^.]*)\.([0-9]*)/.exec(card_id);
+    if (arr) {
+      gmdata.draggables.push({
+        "id": "buy:" + card_id,
+        "destinations": [
+          {
+            "area": {
+              "playerIndex": 0,
+              "name": "discard"
+            }
+          }
+        ],
+        "source": {
+          "area": {
+            "name": "supply",
+            "supplyDeck": arr[1],
+          }
+        },
+        "card": card_id,
+        "moveToDestination": true
+      });
     }
   }
 
