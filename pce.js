@@ -2,30 +2,31 @@ $(document).ready(function() {var main = function() {
   // Note: The above line is a single line in order to get accurate
   // line numbers for error messages.
 
-  // Boilerplate to read websocket traffic.
+  var websocket_wrapper;
+
+  var DIRECTION = {
+    SENDING: 'sending',
+    RECEIVING: 'receiving'
+  };
+
+  // Boilerplate to read and modify websocket traffic.
   function hookWebSocket() {
     // Adapted from: http://sla.ckers.org/forum/read.php?6,35771,35771
     window.WebSocket = function(oldWebSocket) {
       return function WrappedWebSocket(loc) {
         this.prototype = new oldWebSocket(loc);
         this.__proto__ = this.prototype;
-        var wrapper = this;
+        websocket_wrapper = this;
         this.onmessage = function(message) {
           var data = message.data;
-          var ret = onReceiveData(wrapper, data);
-          if (ret != undefined) {
-            console.log('Modified received data.');
-            console.log('Original: ' + data);
-            data = ret;
-            console.log('Modified: ' + data);
-          }
-          wrapper.trueonmessage({data: data});
+          data = handleMessageHelper(data, DIRECTION.RECEIVING);
+          websocket_wrapper.trueonmessage({data: data});
         };
         this.__defineSetter__('onmessage', function(val) {
-          wrapper.trueonmessage = val;
+          websocket_wrapper.trueonmessage = val;
         });
         this.send = function(data) {
-          onSendData(wrapper, data);
+          data = handleMessageHelper(data, DIRECTION.SENDING);
           this.prototype.send(data);
         };
       };
@@ -34,20 +35,23 @@ $(document).ready(function() {var main = function() {
 
   hookWebSocket();
 
-  // Actually do stuff now.
+  function handleMessageHelper(data, direction) {
+    var ret = handleMessage(data, direction);
+    if (ret != undefined) {
+      console.log('Modified websocket traffic.');
+      console.log('Original: ' + data);
+      data = ret;
+      console.log('Modified: ' + data);
+    }
+    return data;
+  }
+
+  // Format JSON nicely (to print to the console).
   function prettyJSON(msg) {
     return JSON.stringify(msg, null, 4);
   }
 
-  function onSendData(wrapper, raw_data) {
-    return processRawData(wrapper, raw_data);
-  }
-
-  function onReceiveData(wrapper, raw_data) {
-    return processRawData(wrapper, raw_data);
-  }
-
-  var websocket_wrapper;
+  // Main code.
   var userID;
   var gameID;
 
@@ -55,22 +59,25 @@ $(document).ready(function() {var main = function() {
   var playerIndex;
 
   var PRINT_MESSAGE_TYPES = true;
-  var DUMP_MESSAGES = {'Ping': true, 'Status': true};
+  var DUMP_MESSAGES = {};
   var PRINT_GM_TYPES = true;
-  var DUMP_ALL_GM = true;
-  var DUMP_GM = {'uiMultiSelectResponse': true, 'addChat': true};
+  var DUMP_ALL_GM = false;
+  var DUMP_GM = {'resign': true, 'gameOver': true, 'gameEvent2': true};
 
   var CHEAT_BUYABLE = false;
   var CHEAT_SUPPLY_PLAYABLE = false;
 
-  function processRawData(wrapper, raw_data) {
+  function handleMessage(raw_data, direction) {
     var msg = $.parseJSON(raw_data);
+
+    var formatted_message_type = msg.message + ' (' + direction + ')';
+
     if (PRINT_MESSAGE_TYPES) {
-      console.log('Message type: ' + msg.message);
+      console.log('Message type: ' + formatted_message_type);
     }
 
     if (DUMP_MESSAGES[msg.message]) {
-      console.log(msg.message + ': ' + prettyJSON(msg));
+      console.log(formatted_message_type + ': ' + prettyJSON(msg));
     }
 
     var changed = false;
@@ -80,20 +87,18 @@ $(document).ready(function() {var main = function() {
       var msgname = outerdata.messageName;
       var gmdata = outerdata.data;
 
+      var formatted_msgname = msgname + ' (' + direction + ')';
+
       if (PRINT_GM_TYPES) {
-        console.log('    GameMessage type: ' + msgname);
+        console.log('GameMessage type: ' + formatted_msgname);
       }
-      if (DUMP_ALL_GM) {
-        console.log('    GameMessage contents: ' + prettyJSON(msg));
-      }
-      if (DUMP_GM[msgname]) {
-        console.log(msgname + ': ' + prettyJSON(msg));
+      if (DUMP_ALL_GM || DUMP_GM[msgname]) {
+        console.log('GameMessage ' + formatted_msgname + ': ' + prettyJSON(msg));
       }
 
       if (msgname == 'gameSetup') {
         // This is a reasonable time to save information that's constant
         // throughout a single game.
-        websocket_wrapper = wrapper;
         userID = msg.destination;
         gameID = msg.source;
         playerIndex = gmdata.playerIndex;
@@ -285,43 +290,54 @@ $(document).ready(function() {var main = function() {
     sendChat("* Cards tracked by Goko Dominion Extension *");
   }
 
-  function sendChat(text) {
-    // Send to others.
-    var msg = {
+  function makeGameMessage(source, destination, msgname, gmdata) {
+    return {
       'message': 'GameMessage',
       'version': 1,
       'tag': '',
-      'source': userID,
-      'destination': gameID,
+      'source': source,
+      'destination': destination,
       'data': {
-        'messageName': 'sendChat',
-        'data': {
-          'text': text
-        }
+        'messageName': msgname,
+        'data': gmdata
       }
     };
+  }
+
+  function sendMessage(msg) {
     var data = JSON.stringify(msg);
     websocket_wrapper.send(data);
+  }
 
-    // Send to me.
-    var myName = playerNames[playerIndex];
-    var msg = {
-      'message': 'GameMessage',
-      'version': 1,
-      'tag': '',
-      'source': gameID,
-      'destination': userID,
-      'data': {
-        'messageName': 'addChat',
-        'data': {
-          'playerName': myName,
-          'text': text
-        }
-      }
-    };
+  function receiveMessage(msg) {
     var data = JSON.stringify(msg);
     websocket_wrapper.prototype.onmessage({data: data});
   }
+
+  function sendChat(text) {
+    // Send to others.
+    var msg = makeGameMessage(userID, gameID, 'sendChat', {
+      'text': text
+    });
+    sendMessage(msg);
+
+    // Send to me.
+    var myName = playerNames[playerIndex];
+    var msg = makeGameMessage(gameID, userID, 'addChat', {
+      'playerName': myName,
+      'text': text
+    });
+    receiveMessage(msg);
+  }
+
+  function resign() {
+    var msg = makeGameMessage(userID, gameID, 'resign', {});
+    sendMessage(msg);
+  }
+
+  // For use from the console.
+  window.PCESendChat = sendChat;
+  window.PCEResign = resign;
 }
 
 // Boilerplate to run in page context (important for hooking the websocket).
