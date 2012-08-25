@@ -19,15 +19,18 @@ $(document).ready(function() {var main = function() {
         websocket_wrapper = this;
         this.onmessage = function(message) {
           var data = message.data;
-          data = handleMessageHelper(data, DIRECTION.RECEIVING);
-          websocket_wrapper.trueonmessage({data: data});
+          data = handleMessageHelper(data, DIRECTION.RECEIVING, function(new_data) {
+            websocket_wrapper.trueonmessage({data: new_data});
+          });
         };
         this.__defineSetter__('onmessage', function(val) {
           websocket_wrapper.trueonmessage = val;
         });
         this.send = function(data) {
-          data = handleMessageHelper(data, DIRECTION.SENDING);
-          this.prototype.send(data);
+          var that = this;
+          data = handleMessageHelper(data, DIRECTION.SENDING, function(new_data) {
+            that.prototype.send(new_data);
+          });
         };
       };
     }(window.WebSocket);
@@ -35,34 +38,49 @@ $(document).ready(function() {var main = function() {
 
   hookWebSocket();
 
-  function handleMessageHelper(data, direction) {
+  function handleMessageHelper(data, direction, callback) {
     var ret = handleMessage(data, direction);
-    if (ret != undefined) {
+    if (ret == false) {
+      console.log('Cancelled websocket traffic.');
+      return;
+    } else if (ret != undefined) {
       console.log('Modified websocket traffic.');
       console.log('Original: ' + data);
       data = ret;
       console.log('Modified: ' + data);
     }
-    return data;
+    callback(data);
   }
 
+  //// Utilities.
   // Format JSON nicely (to print to the console).
   function prettyJSON(msg) {
     return JSON.stringify(msg, null, 4);
   }
 
-  // Main code.
+  function reportError(msg) {
+    var errorMsg = 'ERROR: ' + msg;
+    console.log(errorMsg);
+    alert(errorMsg);
+  }
+
+  //// Main code.
   var userID;
   var gameID;
 
   var playerNames;
   var playerIndex;
 
-  var PRINT_MESSAGE_TYPES = true;
-  var DUMP_MESSAGES = {};
-  var PRINT_GM_TYPES = true;
-  var DUMP_ALL_GM = false;
-  var DUMP_GM = {'resign': true, 'gameOver': true, 'gameEvent2': true};
+  var PRINT_MESSAGE_TYPES = false;
+  var DUMP_MESSAGES = {
+  };
+  var PRINT_GM_TYPES = false;
+  var DUMP_ALL_GM = true;
+  var DUMP_GM = {
+  };
+  var CANCEL_GM = {
+    'doParticleEffectAnimations': true
+  };
 
   var CHEAT_BUYABLE = false;
   var CHEAT_SUPPLY_PLAYABLE = false;
@@ -72,7 +90,8 @@ $(document).ready(function() {var main = function() {
 
     var formatted_message_type = msg.message + ' (' + direction + ')';
 
-    if (PRINT_MESSAGE_TYPES) {
+    if (PRINT_MESSAGE_TYPES
+        && (!PRINT_GM_TYPES || msg.message != 'GameMessage')) {
       console.log('Message type: ' + formatted_message_type);
     }
 
@@ -81,6 +100,7 @@ $(document).ready(function() {var main = function() {
     }
 
     var changed = false;
+    var cancel = false;
 
     if (msg.message == 'GameMessage') {
       var outerdata = msg.data;
@@ -109,40 +129,32 @@ $(document).ready(function() {var main = function() {
           playerNames[i] = playerInfo.name;
         });
 
-        console.log('Players: ' + prettyJSON(playerNames));
-
-        // Generate the card IDs for the starting decks, since they aren't
-        // reported to us directly.
-        // TODO: Does this actually work reliably?
-        var nextIndex = {
-          'copper': 0,
-          'estate': 0
-        }
-        $.each(gmdata.startingDecks, function(playerIndex, cards) {
-          var player = playerNames[playerIndex];
-          console.log('Player ' + player + ' starts with deck:');
-          $.each(cards, function(j, card) {
-            var qualifiedCard = card + '.' + nextIndex[card];
-            ++nextIndex[card];
-            console.log('  ' + qualifiedCard);
-          });
-        });
+        initGame(gmdata);
 
         // Send a greeting.
         var wait_time = 4000;
         setTimeout(introducePlugin, wait_time);
+      } else if (msgname == 'putCards') {
+        var target = gmdata.target;
+        $.each(gmdata.cards, function(i, qcard) {
+          // Backs of cards are for the initial deck, which we already
+          // handled.
+          if (qcard != "back") {
+            putCard(qcard, target);
+          }
+        });
       } else if (msgname == 'moveCards') {
         // Process a card move that is NOT triggered by this player's input.
         $.each(gmdata, function(i, moveData) {
           // moveCard and destinationCard sometimes have the value "back",
           // but (so far) sourceCard always shows what the card is.
-          var card = moveData.sourceCard;
-          if (card == 'back') {
-            console.log('ERROR: Unknown moved card for move data: ' + prettyJSON(moveData));
+          var qcard = moveData.sourceCard;
+          if (qcard == 'back') {
+            reportError('Unknown moved card for move data: ' + prettyJSON(moveData));
             return;
           }
 
-          processMove(card, moveData.source, moveData.destination);
+          moveCard(qcard, moveData.source.area, moveData.destination.area);
         });
       } else if (msgname == 'uiMultiSelectResponse') {
         if (gmdata.card != undefined) {
@@ -155,11 +167,11 @@ $(document).ready(function() {var main = function() {
             // it.
             if (gmdata.source.area.name != 'deck'
                 || gmdata.destination.area.name != 'discard') {
-              console.log('ERROR: Unknown moved card for response data: ' + prettyJSON(gmdata));
+              reportError('Unknown moved card for response data: ' + prettyJSON(gmdata));
             }
             return;
           }
-          processMove(card, gmdata.source, gmdata.destination);
+          moveCard(card, gmdata.source.area, gmdata.destination.area);
         } else if (gmdata.id == 'done' || gmdata.id == 'playAll') {
           // Pressed the "Done" or "Play Treasures" button.
           // The treasure plays come in as moveCards messages, so we don't need
@@ -172,8 +184,12 @@ $(document).ready(function() {var main = function() {
         } else if (gmdata.id == 'take') {
           // Chose to take cards off the Native Village mat.
           // TODO: Is this triggered by any other card?
+        } else if (gmdata.id == undefined && gmdata.area.name == 'supply') {
+          // This looks like a reply to an Embargo play.
+        } else if (gmdata.id == 'gold' || gmdata.id == 'cards' || gmdata.id == 'trash') {
+          // This looks like a response to Governor.
         } else {
-          console.log('ERROR: Unrecognized uiMultiSelectResponse: ' + prettyJSON(gmdata));
+          reportError('Unrecognized uiMultiSelectResponse: ' + prettyJSON(gmdata));
         }
       } else if (msgname == 'updateState') {
         // This is only necessary to track VP tokens. Sometimes an updateState
@@ -199,8 +215,13 @@ $(document).ready(function() {var main = function() {
           }
         }
       }
+
+      updateDisplay();
+
+      if (CANCEL_GM[msgname]) cancel = true;
     }
 
+    if (cancel) return false;
     if (changed) return JSON.stringify(msg);
   }
 
@@ -251,34 +272,6 @@ $(document).ready(function() {var main = function() {
         "moveToDestination": true
       });
     }
-  }
-
-  function prettyArea(area) {
-    var data = area.area;
-
-    var player;
-    if (data.playerIndex != undefined) player = playerNames[data.playerIndex];
-
-    if (data.name == 'trash') return 'trash';
-    else if (data.name == 'play') return 'play';
-    else if (data.name == 'supply') return 'supply (' + data.supplyDeck + ')';
-    else if (data.name == 'discard') return 'discard (' + player + ')';
-    else if (data.name == 'hand') return 'hand (' + player + ')';
-    else if (data.name == 'deck') return 'deck (' + player + ')';
-    else if (data.name == 'globalReveal') return 'globalReveal';
-    else if (data.name == 'globalRevealTwo') return 'globalRevealTwo';
-    else if (data.name == 'reveal') return 'reveal (' + player + ')';
-    else if (data.name == 'nativeVillageMat') return 'nativeVillageMat (' + player + ')';
-    else if (data.name == 'islandMat') return 'islandMat (' + player + ')';
-    else if (data.name == 'durationMat') return 'durationMat (' + player + ')';
-    else {
-      console.log('ERROR: Unknown area: ' + prettyJSON(data));
-      return 'ERROR';
-    }
-  }
-
-  function processMove(card, src, dst) {
-    console.log('Move ' + card + ' from ' + prettyArea(src) + ' to ' + prettyArea(dst));
   }
 
   function setVPTokens(playerIndex, numVPTokens) {
@@ -335,9 +328,121 @@ $(document).ready(function() {var main = function() {
     sendMessage(msg);
   }
 
-  // For use from the console.
+  //// Game state.
+  function initGame(gmdata) {
+    initAreas();
+
+    // Generate the card IDs for the starting decks, since they aren't
+    // reported to us directly.
+    // TODO: Does this actually work reliably?
+    var nextIndex = {
+      'copper': 0,
+      'estate': 0
+    }
+    $.each(gmdata.startingDecks, function(playerIndex, cards) {
+      var player = playerNames[playerIndex];
+      $.each(cards, function(j, card) {
+        var qualifiedCard = card + '.' + nextIndex[card];
+        ++nextIndex[card];
+        putCard(qualifiedCard, makeDeckArea(playerIndex));
+      });
+    });
+  }
+
+  // Areas.
+  var areaCards;
+
+  function initAreas() {
+    areaCards = {};
+  }
+
+  function areaToString(area) {
+    var player;
+    if (area.playerIndex != undefined) player = playerNames[area.playerIndex];
+
+    if (area.name == 'trash') return 'trash';
+    else if (area.name == 'play') return 'play';
+    else if (area.name == 'supply') return 'supply (' + area.supplyDeck + ')';
+    else if (area.name == 'discard') return 'discard (' + player + ')';
+    else if (area.name == 'hand') return 'hand (' + player + ')';
+    else if (area.name == 'deck') return 'deck (' + player + ')';
+    else if (area.name == 'globalReveal') return 'globalReveal';
+    else if (area.name == 'globalRevealTwo') return 'globalRevealTwo';
+    else if (area.name == 'reveal') return 'reveal (' + player + ')';
+    else if (area.name == 'nativeVillageMat') return 'nativeVillageMat (' + player + ')';
+    else if (area.name == 'islandMat') return 'islandMat (' + player + ')';
+    else if (area.name == 'durationMat') return 'durationMat (' + player + ')';
+    else {
+      reportError('Unknown area: ' + prettyJSON(area));
+      return;
+    }
+  }
+
+  function makeDeckArea(playerIndex) {
+    return {
+      'name': 'deck',
+      'playerIndex': playerIndex
+    }
+  }
+
+  function getAreaCards(area) {
+    // Store the cards in an area as an array, because sometimes order
+    // matters, such as for supply piles.
+    areaStr = areaToString(area);
+    if (areaCards[areaStr] == undefined) areaCards[areaStr] = [];
+    return areaCards[areaStr];
+  }
+
+  function putCard(qcard, area) {
+    getAreaCards(area).push(qcard);
+  }
+
+  function removeCard(qcard, area) {
+    var cards = getAreaCards(area);
+    var idx = cards.indexOf(qcard);
+    if (idx == -1) {
+      reportError('Card ' + qcard + ' not in area ' + areaToString(area));
+      return;
+    }
+    cards.splice(idx, 1);
+  }
+
+  function moveCard(qcard, src, dst) {
+    removeCard(qcard, src);
+    putCard(qcard, dst);
+  }
+
+
+  //// Display.
+  function updateDisplay() {
+    var html = '';
+    html += 'Game state:<br>';
+    for (var areaStr in areaCards) {
+      var cards = areaCards[areaStr];
+      html += areaStr + ':  ' + JSON.stringify(cards) + '<br>';
+    }
+    $('#display-div').html(html);
+  }
+
+  function getCanvas() {
+    return $('#myCanvas');
+  }
+
+  function toggleFauxIsotropic() {
+  }
+
+
+  //// Set up display area.
+  $('body').append('<div id="display-div"></div>');
+
+  $('#display-div').css('color', 'white');
+  $('#display-div').css('font-family', 'monospace');
+
+
+  //// For use from the console.
   window.PCESendChat = sendChat;
   window.PCEResign = resign;
+  window.PCEGetCanvas = getCanvas;
 }
 
 // Boilerplate to run in page context (important for hooking the websocket).
