@@ -2,6 +2,8 @@ $(document).ready(function() {var main = function() {
   // Note: The above line is a single line in order to get accurate
   // line numbers for error messages.
 
+  console.log('PCE enabled.');
+
   var websocket_wrapper;
 
   var DIRECTION = {
@@ -39,7 +41,14 @@ $(document).ready(function() {var main = function() {
   hookWebSocket();
 
   function handleMessageHelper(data, direction, callback) {
-    var ret = handleMessage(data, direction);
+    var ret;
+
+    try {
+      ret = handleMessage(data, direction);
+    } catch (err) {
+      reportError(err);
+    }
+
     if (ret == false) {
       console.log('Cancelled websocket traffic.');
       return;
@@ -79,7 +88,7 @@ $(document).ready(function() {var main = function() {
   var DUMP_GM = {
   };
   var CANCEL_GM = {
-    'doParticleEffectAnimations': true
+    //'doParticleEffectAnimations': true
   };
 
   var CHEAT_BUYABLE = false;
@@ -145,7 +154,7 @@ $(document).ready(function() {var main = function() {
         });
       } else if (msgname == 'moveCards') {
         // Process a card move that is NOT triggered by this player's input.
-        $.each(gmdata, function(i, moveData) {
+        $.each(gmdata.moves, function(i, moveData) {
           // moveCard and destinationCard sometimes have the value "back",
           // but (so far) sourceCard always shows what the card is.
           var qcard = moveData.sourceCard;
@@ -388,7 +397,7 @@ $(document).ready(function() {var main = function() {
   function getAreaCards(area) {
     // Store the cards in an area as an array, because sometimes order
     // matters, such as for supply piles.
-    areaStr = areaToString(area);
+    var areaStr = areaToString(area);
     if (areaCards[areaStr] == undefined) areaCards[areaStr] = [];
     return areaCards[areaStr];
   }
