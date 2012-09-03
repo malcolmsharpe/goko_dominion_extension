@@ -80,11 +80,11 @@ $(document).ready(function() {var main = function() {
   var playerNames;
   var playerIndex;
 
-  var PRINT_MESSAGE_TYPES = false;
+  var PRINT_MESSAGE_TYPES = true;
   var DUMP_MESSAGES = {
   };
   var PRINT_GM_TYPES = false;
-  var DUMP_ALL_GM = true;
+  var DUMP_ALL_GM = false;
   var DUMP_GM = {
   };
   var CANCEL_GM = {
@@ -93,6 +93,7 @@ $(document).ready(function() {var main = function() {
 
   var CHEAT_BUYABLE = false;
   var CHEAT_SUPPLY_PLAYABLE = false;
+  var CHEAT_NO_MOVE_AS_BACK = true;
 
   function handleMessage(raw_data, direction) {
     var msg = $.parseJSON(raw_data);
@@ -164,6 +165,11 @@ $(document).ready(function() {var main = function() {
           }
 
           moveCard(qcard, moveData.source.area, moveData.destination.area);
+
+          if (CHEAT_NO_MOVE_AS_BACK && moveData.moveAsBack) {
+            moveData.moveAsBack = false;
+            changed = true;
+          }
         });
       } else if (msgname == 'uiMultiSelectResponse') {
         if (gmdata.card != undefined) {
@@ -197,6 +203,8 @@ $(document).ready(function() {var main = function() {
           // This looks like a reply to an Embargo play.
         } else if (gmdata.id == 'gold' || gmdata.id == 'cards' || gmdata.id == 'trash') {
           // This looks like a response to Governor.
+        } else if (gmdata.id == 'discard_deck') {
+          // This looks like a response to Chancellor.
         } else {
           reportError('Unrecognized uiMultiSelectResponse: ' + prettyJSON(gmdata));
         }
